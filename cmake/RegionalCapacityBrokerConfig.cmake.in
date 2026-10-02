@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+# RegionalCapacityBroker -- CMake package configuration.
+#
+# The runtime is header-and-library C++20 with a single transitive dependency:
+# the platform thread library, which the exported target already carries.
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/RegionalCapacityBrokerTargets.cmake")
+
+check_required_components(RegionalCapacityBroker)

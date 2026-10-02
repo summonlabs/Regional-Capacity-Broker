@@ -1,0 +1,242 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Summon Software Labs.
+#
+# Continuous integration for the Regional Capacity Broker.
+#
+# Jobs:
+#   windows-msvc             MSVC on windows-latest, Release and Debug
+#   linux-gcc                GCC on ubuntu-latest, Release and Debug
+#   linux-clang              Clang on ubuntu-latest, Release and Debug
+#   linux-sanitizers         GCC with AddressSanitizer + UndefinedBehaviorSanitizer,
+#                            whole CTest suite
+#   linux-install-consumer   install + independent downstream consumer proof
+#   windows-install-consumer the same proof on Windows
+#
+# Every job configures with -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON,
+# builds, and runs the whole CTest suite with "ctest --output-on-failure"; the
+# two install jobs additionally run the whole-tree packaging proof
+# (cmake/PackageCheck.cmake), which installs into a scratch prefix, builds
+# examples/downstream as a separate CMake project against that prefix only, runs
+# it, and requires its documented "RCB-DOWNSTREAM-OK" marker line.
+#
+# ---------------------------------------------------------------------------
+# NO TIMEOUTS ANYWHERE -- this is a hard project rule.
+#
+# No job and no step in this workflow may set one:
+#
+#   * no "timeout-minutes" key on any job or any step;
+#   * no "--timeout" on ctest, and no CTest TIMEOUT test property;
+#   * no "timeout" shell wrapper and no watchdog process around a configure,
+#     build, test, install or packaging step.
+#
+# A build or a test that hangs is a defect in the runtime, and the log is what
+# reveals it. Killing the run after an arbitrary wall-clock budget would hide the
+# defect, silently drop coverage, and turn a reproducible hang into an
+# intermittent CI failure that nobody can diagnose. A hanging run is meant to be
+# noticed by a human reading a red job, not by a stopwatch. Do not add a timeout
+# to make CI look faster or to route around a slow machine: fix the hang, or
+# report it.
+# ---------------------------------------------------------------------------
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only: nothing here writes to the repository.
+permissions:
+  contents: read
+
+jobs:
+  # ---- MSVC on Windows, Release and Debug --------------------------------
+  windows-msvc:
+    name: Windows / MSVC / ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      # Every leg reports: a Debug-only failure must not be hidden by a
+      # cancelled Release leg.
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Visual Studio generator is multi-configuration, so CMAKE_BUILD_TYPE
+      # carries no meaning here: the configuration is selected by --config and
+      # -C on the build and test steps below.
+      - name: Configure (MSVC)
+        run: cmake -S . -B build -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (MSVC, ${{ matrix.build_type }})
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test (CTest, whole suite, ${{ matrix.build_type }})
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+
+  # ---- GCC on Linux, Release and Debug -----------------------------------
+  linux-gcc:
+    name: Linux / GCC / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    env:
+      CC: gcc
+      CXX: g++
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (GCC, ${{ matrix.build_type }})
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (GCC, ${{ matrix.build_type }})
+        run: cmake --build build --parallel
+
+      - name: Test (CTest, whole suite, ${{ matrix.build_type }})
+        run: ctest --test-dir build --output-on-failure
+
+  # ---- Clang on Linux, Release and Debug ---------------------------------
+  linux-clang:
+    name: Linux / Clang / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Clang, ${{ matrix.build_type }})
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (Clang, ${{ matrix.build_type }})
+        run: cmake --build build --parallel
+
+      - name: Test (CTest, whole suite, ${{ matrix.build_type }})
+        run: ctest --test-dir build --output-on-failure
+
+  # ---- AddressSanitizer + UndefinedBehaviorSanitizer ---------------------
+  linux-sanitizers:
+    name: Linux / GCC / ASan + UBSan
+    runs-on: ubuntu-latest
+    env:
+      CC: gcc
+      CXX: g++
+      # Leak detection is on by default with ASan on Linux; it is stated here so
+      # that a runner default can never quietly disable it.
+      ASAN_OPTIONS: detect_leaks=1
+      # A UBSan diagnostic must fail the test that produced it rather than being
+      # noted and scrolled past.
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+
+      # Not a timeout, and not a response to a slow test. AddressSanitizer maps
+      # its shadow memory at a fixed address and can collide with a mapping the
+      # kernel hands out when mmap randomness defaults to 32 bits (Ubuntu 24.04
+      # runners). Lowering the entropy to 28 bits is the documented remedy on
+      # those kernels; on kernels that do not expose the knob nothing happens.
+      - name: Reduce ASLR entropy for the sanitizer shadow mapping
+        run: |
+          if [ -e /proc/sys/vm/mmap_rnd_bits ]; then
+            sudo sysctl -w vm.mmap_rnd_bits=28
+          fi
+
+      - name: Configure (ASan + UBSan)
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DREGIONAL_CAPACITY_BROKER_ENABLE_SANITIZERS=ON
+          -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (ASan + UBSan)
+        run: cmake --build build --parallel
+
+      - name: Test (CTest, whole suite under ASan + UBSan)
+        run: ctest --test-dir build --output-on-failure
+
+      # The suite's output is already in the job log, so an artifact earns its
+      # place only on failure: a sanitizer report is long, and CTest's log keeps
+      # it in one piece next to the failing test's own output.
+      - name: Upload the CTest log after a failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-sanitizers
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  # ---- install + independent downstream consumer, Linux ------------------
+  linux-install-consumer:
+    name: Linux / install + downstream consumer
+    runs-on: ubuntu-latest
+    env:
+      CC: gcc
+      CXX: g++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (GCC, Release)
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test (CTest, whole suite)
+        run: ctest --test-dir build --output-on-failure
+
+      # The packaging proof: install into a scratch prefix with the test and
+      # tool components off, then configure, build and run examples/downstream
+      # as a separate project that finds the package through CMAKE_PREFIX_PATH
+      # alone (the package registries are disabled inside the script), and
+      # require its marker line. The script fails with a non-zero exit status on
+      # any problem, and it contains no timeouts of any kind.
+      - name: Whole-tree packaging proof (install + downstream consumer)
+        run: >-
+          cmake
+          -DSOURCE_DIR="${{ github.workspace }}"
+          -DWORK_DIR="${{ runner.temp }}/rcb-package-check"
+          -P cmake/PackageCheck.cmake
+
+  # ---- install + independent downstream consumer, Windows ----------------
+  windows-install-consumer:
+    name: Windows / install + downstream consumer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (MSVC)
+        run: cmake -S . -B build -DREGIONAL_CAPACITY_BROKER_WARNINGS_AS_ERRORS=ON
+
+      - name: Build (MSVC, Release)
+        run: cmake --build build --config Release --parallel
+
+      - name: Test (CTest, whole suite, Release)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # The same packaging proof as on Linux. The script forwards the build
+      # configuration to the multi-configuration Visual Studio generator, and
+      # with tests and tools off the install set is exercised on its own. It
+      # contains no timeouts of any kind.
+      - name: Whole-tree packaging proof (install + downstream consumer)
+        run: >-
+          cmake
+          -DSOURCE_DIR="${{ github.workspace }}"
+          -DWORK_DIR="${{ runner.temp }}/rcb-package-check"
+          -P cmake/PackageCheck.cmake

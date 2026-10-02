@@ -1,0 +1,50 @@
+Regional Capacity Broker
+
+Copyright 2026 Summon Software Labs
+
+Regional Capacity Broker is an open-source, vendor-neutral runtime that
+arbitrates facility-level capacity commitments across multiple data-center
+sites. It owns regional capacity offers, asks, brokerage decisions,
+brokerage-layer allocation commitments and their exact accounting. It does not
+own each site's underlying capacity truth, cross-site placement topology,
+reservation execution, local admission policy or workload scheduling. It is
+built from the C++20 standard library only.
+
+This product is licensed under the Apache License, Version 2.0. See the
+LICENSE file in this distribution for the full license text.
+
+Regional Capacity Broker does not collect or transmit any telemetry. It makes no
+network connection of any kind. Every byte it writes goes to the local store
+directory the operator names on the command line or passes to the library, and
+nothing leaves the machine running the software.
+
+Regional Capacity Broker accepts contributions from individuals and
+organizations on the terms of the Apache License 2.0 without requiring a
+Contributor License Agreement (CLA). See CONTRIBUTING.md for contribution
+guidance.
+
+Third-party components
+----------------------
+
+None. No third-party source code, library, header or generated artefact is
+included in, linked into, or required by this product.
+
+The build depends only on the platform's own toolchain and operating system:
+
+  * the C++20 standard library of the toolchain that builds the project;
+  * the operating system's file, locking and durability primitives, used for the
+    durable journal and snapshot store and for writer fencing
+    (FlushFileBuffers and MoveFileEx on Windows, fsync, ftruncate, rename and
+    flock elsewhere);
+  * the platform thread library, for the bounded worker pool.
+
+SHA-256 and CRC-32C are implemented in this repository from their published
+specifications. No cryptographic, compression, serialization or JSON library is
+linked, and no package manager is contacted at build time or at run time.
+
+Trademarks
+----------
+
+All product names, trademarks and registered trademarks mentioned in this
+repository are the property of their respective owners and are used only for
+identification purposes.
