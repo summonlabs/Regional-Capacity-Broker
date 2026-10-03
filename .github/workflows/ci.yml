@@ -19,24 +19,6 @@
 # examples/downstream as a separate CMake project against that prefix only, runs
 # it, and requires its documented "RCB-DOWNSTREAM-OK" marker line.
 #
-# ---------------------------------------------------------------------------
-# NO TIMEOUTS ANYWHERE -- this is a hard project rule.
-#
-# No job and no step in this workflow may set one:
-#
-#   * no "timeout-minutes" key on any job or any step;
-#   * no "--timeout" on ctest, and no CTest TIMEOUT test property;
-#   * no "timeout" shell wrapper and no watchdog process around a configure,
-#     build, test, install or packaging step.
-#
-# A build or a test that hangs is a defect in the runtime, and the log is what
-# reveals it. Killing the run after an arbitrary wall-clock budget would hide the
-# defect, silently drop coverage, and turn a reproducible hang into an
-# intermittent CI failure that nobody can diagnose. A hanging run is meant to be
-# noticed by a human reading a red job, not by a stopwatch. Do not add a timeout
-# to make CI look faster or to route around a slow machine: fix the hang, or
-# report it.
-# ---------------------------------------------------------------------------
 
 name: CI
 
